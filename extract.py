@@ -3,90 +3,100 @@ import numpy as np
 import nibabel as nib
 from nilearn.image import concat_imgs
 
-# grab the LR and RL phase encoding rest images from one subject
-sub_id = 100307
-rs_files = glob.glob('/Volumes/TRESOR/neurospin/Volumes/DANILO2/neurospin/population/HCP/S500-1/%i/MNINonLinear/Results/rfMRI_REST1_??/rfMRI_REST1_??.nii.gz' % sub_id)
-
-
 mask_file = nib.load('grey10_icbm_3mm_bin.nii.gz')
 
-# may take a while ! -> unpacks 2 1TB gz archives
-# timeit on MBP: 1 loops, best of 1: 2min 13s 
-all_sub_rs_maps = concat_imgs(rs_files)
-cur_shape = all_sub_rs_maps.get_data().shape
-size_in_GB = all_sub_rs_maps.get_data().nbytes / 1e9
+# grab the LR and RL phase encoding rest images from one subject
+rs_files1 = glob.glob('/Volumes/TRESOR/neurospin/Volumes/DANILO2/neurospin/population/HCP/S500-1/*/MNINonLinear/Results/rfMRI_REST1_LR/rfMRI_REST1_LR.nii.gz')
 
-print('% rs images: %.2f GB' % (cur_shape[-1], size_in_GB))
+for i_file, rs_file in enumerate(rs_files1):
+    sub_id = int(rs_file.split('/')[10])
 
-###############################################################################
-# dump network projections
-###############################################################################
+    print('Doing %i/%i: %s...' % (i_file + 1, len(rs_files1), rs_file))
 
-# retrieve network projections
-from nilearn import datasets as ds
-smith_pkg = ds.fetch_atlas_smith_2009()
-icas_path = smith_pkg['rsn20']
+    if len(glob.glob('%i_regs_prec*' % sub_id)) > 0:
+        print('Skipped...')
+        continue
 
-from nilearn.input_data import NiftiMapsMasker
-nmm = NiftiMapsMasker(
-    mask_img=mask_file, maps_img=icas_path, resampling_target='mask',
-    standardize=True, detrend=True)
-nmm.fit()
-nmm.maps_img_.to_filename('dbg_ica_maps.nii.gz')
+    # may take a while ! -> unpacks 2 1TB gz archives
+    # timeit on MBP: 1 loops, best of 1: 2min 13s 
+    if isinstance(rs_file, list):
+        all_sub_rs_maps = concat_imgs(rs_file)
+    else:
+        all_sub_rs_maps = nib.load(rs_file)
+    cur_shape = all_sub_rs_maps.get_data().shape
+    size_in_GB = all_sub_rs_maps.get_data().nbytes / 1e9
 
-FS_netproj = nmm.transform(all_sub_rs_maps)
-np.save('%i_nets_timeseries' % sub_id, FS_netproj)
+    print('% rs images: %.2f GB' % (cur_shape[-1], size_in_GB))
 
-# compute network sparse inverse covariance
-from sklearn.covariance import GraphLassoCV
-from nilearn.image import index_img
-from nilearn import plotting
+    ###############################################################################
+    # dump network projections
+    ###############################################################################
 
-try:
-    gsc_nets = GraphLassoCV(verbose=2, alphas=20)
-    gsc_nets.fit(FS_netproj)
+    # retrieve network projections
+    from nilearn import datasets as ds
+    smith_pkg = ds.fetch_atlas_smith_2009()
+    icas_path = smith_pkg['rsn20']
 
-    np.save('%i_nets_cov' % sub_id, gsc_nets.covariance_)
-    np.save('%i_nets_prec' % sub_id, gsc_nets.precision_)
-except:
-    pass
+    from nilearn.input_data import NiftiMapsMasker
+    nmm = NiftiMapsMasker(
+        mask_img=mask_file, maps_img=icas_path, resampling_target='mask',
+        standardize=True, detrend=True)
+    nmm.fit()
+    nmm.maps_img_.to_filename('dbg_ica_maps.nii.gz')
 
-###############################################################################
-# dump region poolings
-###############################################################################
-from nilearn.image import resample_img
+    FS_netproj = nmm.transform(all_sub_rs_maps)
+    np.save('%i_nets_timeseries' % sub_id, FS_netproj)
 
-crad = ds.fetch_atlas_craddock_2012()
-# atlas_nii = index_img(crad['scorr_mean'], 19)  # Craddock 200 region atlas
-atlas_nii = index_img(crad['scorr_mean'], 9)  # Craddock 100 region atlas
+    # compute network sparse inverse covariance
+    from sklearn.covariance import GraphLassoCV
+    from nilearn.image import index_img
+    from nilearn import plotting
 
-r_atlas_nii = resample_img(
-    img=atlas_nii,
-    target_affine=mask_file.get_affine(),
-    target_shape=mask_file.shape,
-    interpolation='nearest'
-)
-r_atlas_nii.to_filename('debug_ratlas.nii.gz')
+    try:
+        gsc_nets = GraphLassoCV(verbose=2, alphas=20)
+        gsc_nets.fit(FS_netproj)
 
-from nilearn.input_data import NiftiLabelsMasker
-nlm = NiftiLabelsMasker(
-    labels_img=r_atlas_nii, mask_img=mask_file,
-    standardize=True, detrend=True)
+        np.save('%i_nets_cov' % sub_id, gsc_nets.covariance_)
+        np.save('%i_nets_prec' % sub_id, gsc_nets.precision_)
+    except:
+        pass
 
-nlm.fit()
-FS_regpool = nlm.transform(all_sub_rs_maps)
-np.save('%i_regs_timeseries' % sub_id, FS_regpool)
+    ###############################################################################
+    # dump region poolings
+    ###############################################################################
+    from nilearn.image import resample_img
 
-# compute network sparse inverse covariance
-from sklearn.covariance import GraphLassoCV
-from nilearn.image import index_img
-from nilearn import plotting
+    crad = ds.fetch_atlas_craddock_2012()
+    # atlas_nii = index_img(crad['scorr_mean'], 19)  # Craddock 200 region atlas
+    atlas_nii = index_img(crad['scorr_mean'], 9)  # Craddock 100 region atlas
 
-try:
-    gsc_nets = GraphLassoCV(verbose=2, alphas=20)
-    gsc_nets.fit(FS_regpool)
+    r_atlas_nii = resample_img(
+        img=atlas_nii,
+        target_affine=mask_file.get_affine(),
+        target_shape=mask_file.shape,
+        interpolation='nearest'
+    )
+    r_atlas_nii.to_filename('debug_ratlas.nii.gz')
 
-    np.save('%i_regs_cov' % sub_id, gsc_nets.covariance_)
-    np.save('%i_regs_prec' % sub_id, gsc_nets.precision_)
-except:
-    pass
+    from nilearn.input_data import NiftiLabelsMasker
+    nlm = NiftiLabelsMasker(
+        labels_img=r_atlas_nii, mask_img=mask_file,
+        standardize=True, detrend=True)
+
+    nlm.fit()
+    FS_regpool = nlm.transform(all_sub_rs_maps)
+    np.save('%i_regs_timeseries' % sub_id, FS_regpool)
+
+    # compute network sparse inverse covariance
+    from sklearn.covariance import GraphLassoCV
+    from nilearn.image import index_img
+    from nilearn import plotting
+
+    try:
+        gsc_nets = GraphLassoCV(verbose=2, alphas=20)
+        gsc_nets.fit(FS_regpool)
+
+        np.save('%i_regs_cov' % sub_id, gsc_nets.covariance_)
+        np.save('%i_regs_prec' % sub_id, gsc_nets.precision_)
+    except:
+        pass
